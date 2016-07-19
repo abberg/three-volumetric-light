@@ -1,12 +1,7 @@
 (function(){
 
-    var scene = new THREE.Scene(),
-        camera = new THREE.PerspectiveCamera( 75, window.innerWidth / window.innerHeight, 0.1, 1000 ),
-        renderer = new THREE.WebGLRenderer(),
-        composer,
-       
-        occlusionRenderTarget,
-        occlusionComposer,
+    var scene, camera, renderer, composer,
+        occlusionRenderTarget, occlusionComposer,
         renderScale = 0.5,
 
         pointLight,
@@ -16,7 +11,11 @@
         angle = 0,
 
         gui = new dat.GUI(),
-        stats = new Stats(); 
+        stats = new Stats();
+
+        scene = new THREE.Scene();
+        camera = new THREE.PerspectiveCamera( 75, window.innerWidth / window.innerHeight, 0.1, 1000 );
+        renderer = new THREE.WebGLRenderer(); 
 
         renderer.setPixelRatio( window.devicePixelRatio );
         renderer.setSize( window.innerWidth, window.innerHeight );
@@ -127,6 +126,8 @@
 
             angle += 0.02;
 
+            lightMesh.quaternion.copy(camera.quaternion);
+
             stats.update();
 
         }
@@ -196,6 +197,11 @@
                 min,
                 max,
                 step,
+                light = {
+                    color: '#fff',
+                    hardness: 0,
+                    radius: 1
+                },
                 updateLightPosition = function(){
                     
                     var p = lightMesh.position.clone(),
@@ -225,10 +231,36 @@
 
                     pointLight.color = new THREE.Color(val);
 
+                 },
+                 updateLightHardness = function(val){
+                    var texture = lightMesh.material.map,
+                        canvas = texture.image,
+                        colorStop = (100 - val) / 100;
+
+                    if(colorStop === 0){
+                        colorStop = 0.005;
+                    }
+
+                    ctx = canvas.getContext('2d');
+
+                    gradient = ctx.createRadialGradient(128,128,128,128,128,0);
+                    gradient.addColorStop( 0, '#000' );
+                    gradient.addColorStop( colorStop, light.color);
+                    ctx.fillStyle = gradient;
+                    ctx.fillRect(0,0,256,256);
+
+                    texture.needsUpdate = true;
+
+                    pointLight.color = new THREE.Color(val);
+                 },
+                 updateLightSize = function(val){
+                    lightMesh.scale.set(val/1, val/1, 1);
                  };
 
             folder = gui.addFolder('Light');
-            folder.addColor({color:'#fff'}, 'color').onChange(updateLightColor),
+            folder.addColor(light, 'color').onChange(updateLightColor),
+            folder.add(light, 'hardness').min(0).max(100).onChange(updateLightHardness);
+            folder.add(light, 'radius').min(0).max(4).onChange(updateLightSize);
             folder.add(lightMesh.position, 'x').min(-10).max(10).step(0.1).onChange(updateLightPosition);
             folder.add(lightMesh.position, 'y').min(-10).max(10).step(0.1).onChange(updateLightPosition);
             folder.add(lightMesh.position, 'z').min(-10).max(10).step(0.1).onChange(updateLightPosition);
