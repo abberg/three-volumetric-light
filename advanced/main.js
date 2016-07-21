@@ -6,9 +6,14 @@
 
         pointLight,
         lightMesh,
+        
         box,
-        occludingBox
+        occludingBox,
         angle = 0,
+
+        volumetricShaderPass,
+        hblurShaderPass,
+        vblurShaderPass,
 
         gui = new dat.GUI(),
         stats = new Stats();
@@ -24,6 +29,7 @@
         document.body.appendChild( stats.dom );
 
         function setupScene(){
+            
             var ambientLight,
                 geometry,
                 material,
@@ -41,15 +47,9 @@
             canvas = document.createElement('canvas');
             canvas.width = 256;
             canvas.height = 256;
+            texture = new THREE.Texture(canvas);
             ctx = canvas.getContext('2d');
-
-            gradient = ctx.createRadialGradient(128,128,128,128,128,0);
-            gradient.addColorStop( 0, '#000' );
-            gradient.addColorStop( 1, '#fff' );
-            ctx.fillStyle = gradient;
-            ctx.fillRect(0,0,256,256);
-
-            texture = new THREE.Texture(canvas) 
+            drawSunGradient(ctx, 1, '#fff');
             texture.needsUpdate = true;
             
             geometry = new THREE.PlaneGeometry(2, 2)  
@@ -74,40 +74,47 @@
             camera.position.z = 6;
 
         }
+
+        function drawSunGradient(ctx, hardness, color){
+            
+            var gradient = ctx.createRadialGradient(128,128,128,128,128,0);
+            
+            gradient.addColorStop( 0, '#000' );
+            gradient.addColorStop( hardness, color );
+            ctx.fillStyle = gradient;
+            ctx.fillRect(0,0,256,256);
+        
+        }
         
         function setupPostprocessing(){
 
-            var hblur,
-                vblur,
-                pass;
+            var addPass;
 
             occlusionRenderTarget = new THREE.WebGLRenderTarget( window.innerWidth * renderScale, window.innerHeight * renderScale );
             occlusionComposer = new THREE.EffectComposer( renderer, occlusionRenderTarget);
                               
             occlusionComposer.addPass( new THREE.RenderPass( scene, camera ) );
 
-            hblur = new THREE.ShaderPass( THREE.HorizontalBlurShader );
-            hblur.uniforms.h.value = 1 / window.innerWidth;
-            occlusionComposer.addPass( hblur );
+            hblurShaderPass = new THREE.ShaderPass( THREE.HorizontalBlurShader );
+            hblurShaderPass.uniforms.h.value = 1 / window.innerWidth;
+            occlusionComposer.addPass( hblurShaderPass );
 
-            vblur = new THREE.ShaderPass( THREE.VerticalBlurShader );
-            vblur.uniforms.v.value = 1 / window.innerHeight;
-            occlusionComposer.addPass( vblur );
+            vblurShaderPass = new THREE.ShaderPass( THREE.VerticalBlurShader );
+            vblurShaderPass.uniforms.v.value = 1 / window.innerHeight;
+            occlusionComposer.addPass( vblurShaderPass );
 
-            pass = new THREE.ShaderPass( THREE.VolumetericLightShader );
-            pass.needsSwap = false;
-            occlusionComposer.addPass( pass );
-
-            populateGUI(pass, hblur, vblur);
+            volumetricShaderPass = new THREE.ShaderPass( THREE.VolumetericLightShader );
+            volumetricShaderPass.needsSwap = false;
+            occlusionComposer.addPass( volumetricShaderPass );
 
             composer = new THREE.EffectComposer( renderer );
             composer.addPass( new THREE.RenderPass( scene, camera ) );
 
-            pass = new THREE.ShaderPass( THREE.AdditiveBlendingShader );
-            pass.uniforms.tAdd.value = occlusionRenderTarget.texture;
-            composer.addPass( pass );
+            addPass = new THREE.ShaderPass( THREE.AdditiveBlendingShader );
+            addPass.uniforms.tAdd.value = occlusionRenderTarget.texture;
+            composer.addPass( addPass );
 
-            pass.renderToScreen = true;
+            addPass.renderToScreen = true;
 
         }
 
@@ -166,6 +173,103 @@
         
         }, false );
 
+        function populateGUI(){
+            addLightControls();
+            addShaderControls();
+            addBlurControls();
+            addRenderTargetImage();
+        }
+
+        function addLightControls(){
+            var folder,
+                light = {
+                    color: '#fff',
+                    hardness: 0,
+                    radius: 1
+                },
+                
+                updateLightPosition = function(){
+                    
+                    var p = lightMesh.position.clone(),
+                        vector = p.project(camera),
+                        x = ( vector.x + 1 ) / 2,
+                        y = ( vector.y + 1 ) / 2;
+                    
+                    rays.uniforms.lightPosition.value.set(x, y);
+
+                    pointLight.position.copy(lightMesh.position);
+                 
+                },
+                 
+                updateLightColor = function(val){
+
+                    var texture = lightMesh.material.map,
+                        ctx = texture.image.getContext('2d');
+
+                    drawSunGradient(ctx, 1, val );
+                    texture.needsUpdate = true;
+
+                    pointLight.color = new THREE.Color(val);
+
+                },
+                 
+                updateLightHardness = function(val){
+                    
+                    var texture = lightMesh.material.map,
+                        ctx = texture.image.getContext('2d'),
+                        colorStop = (100 - val) / 100;
+
+                    if(colorStop === 0){
+                        colorStop = 0.005;
+                    }
+
+                    drawSunGradient(ctx, colorStop, light.color );
+                    texture.needsUpdate = true;
+
+                    pointLight.color = new THREE.Color(val);
+                },
+                 
+                updateLightSize = function(val){
+                    lightMesh.scale.set(val/1, val/1, 1);
+                };
+
+            folder = gui.addFolder('Light');
+            folder.addColor(light, 'color').onChange(updateLightColor),
+            folder.add(light, 'hardness').min(0).max(100).onChange(updateLightHardness);
+            folder.add(light, 'radius').min(0).max(4).onChange(updateLightSize);
+            folder.add(lightMesh.position, 'x').min(-10).max(10).step(0.1).onChange(updateLightPosition);
+            folder.add(lightMesh.position, 'y').min(-10).max(10).step(0.1).onChange(updateLightPosition);
+            folder.add(lightMesh.position, 'z').min(-10).max(10).step(0.1).onChange(updateLightPosition);
+            folder.open();
+
+        }
+
+        function addShaderControls(){
+            var u = volumetricShaderPass.uniforms,
+                folder = gui.addFolder('Volumeteric Light Shader');
+
+            folder.add(u.exposure, 'value').min(0).max(1).step(0.1).name('exposure');
+            folder.add(u.decay, 'value').min(0.8).max(1).step(0.001).name('decay');
+            folder.add(u.density, 'value').min(0).max(1).step(0.01).name('density');
+            folder.add(u.weight, 'value').min(0).max(1).step(0.01).name('weight');
+            folder.add(u.samples, 'value').min(1).max(100).step(1).name('samples');
+            
+            folder.open();
+        }
+
+        function addBlurControls(){
+            
+            var folder = gui.addFolder('Blur Shader');
+            
+            folder.add({blur:1}, 'blur')
+                .min(0.0).max(3)
+                .onChange(function(value) {
+                    hblurShaderPass.uniforms.h.value = value / window.innerWidth;
+                    vblurShaderPass.uniforms.v.value = value / window.innerHeight;
+                });
+            folder.open();
+        }
+
         function addRenderTargetImage(){
             
             var material,
@@ -190,134 +294,9 @@
 
         }
 
-        function populateGUI(rays, hblur, vblur){
-
-            var folder,
-                prop,
-                min,
-                max,
-                step,
-                light = {
-                    color: '#fff',
-                    hardness: 0,
-                    radius: 1
-                },
-                updateLightPosition = function(){
-                    
-                    var p = lightMesh.position.clone(),
-                        vector = p.project(camera),
-                        x = ( vector.x + 1 ) / 2,
-                        y = ( vector.y + 1 ) / 2;
-                    
-                    rays.uniforms.lightPosition.value.set(x, y);
-
-                    pointLight.position.copy(lightMesh.position);
-                 
-                 },
-                 updateLightColor = function(val){
-
-                    var texture = lightMesh.material.map,
-                        canvas = texture.image;
-
-                    ctx = canvas.getContext('2d');
-
-                    gradient = ctx.createRadialGradient(128,128,128,128,128,0);
-                    gradient.addColorStop( 0, '#000' );
-                    gradient.addColorStop( 1, val );
-                    ctx.fillStyle = gradient;
-                    ctx.fillRect(0,0,256,256);
-
-                    texture.needsUpdate = true;
-
-                    pointLight.color = new THREE.Color(val);
-
-                 },
-                 updateLightHardness = function(val){
-                    var texture = lightMesh.material.map,
-                        canvas = texture.image,
-                        colorStop = (100 - val) / 100;
-
-                    if(colorStop === 0){
-                        colorStop = 0.005;
-                    }
-
-                    ctx = canvas.getContext('2d');
-
-                    gradient = ctx.createRadialGradient(128,128,128,128,128,0);
-                    gradient.addColorStop( 0, '#000' );
-                    gradient.addColorStop( colorStop, light.color);
-                    ctx.fillStyle = gradient;
-                    ctx.fillRect(0,0,256,256);
-
-                    texture.needsUpdate = true;
-
-                    pointLight.color = new THREE.Color(val);
-                 },
-                 updateLightSize = function(val){
-                    lightMesh.scale.set(val/1, val/1, 1);
-                 };
-
-            folder = gui.addFolder('Light');
-            folder.addColor(light, 'color').onChange(updateLightColor),
-            folder.add(light, 'hardness').min(0).max(100).onChange(updateLightHardness);
-            folder.add(light, 'radius').min(0).max(4).onChange(updateLightSize);
-            folder.add(lightMesh.position, 'x').min(-10).max(10).step(0.1).onChange(updateLightPosition);
-            folder.add(lightMesh.position, 'y').min(-10).max(10).step(0.1).onChange(updateLightPosition);
-            folder.add(lightMesh.position, 'z').min(-10).max(10).step(0.1).onChange(updateLightPosition);
-            folder.open();
-
-            folder = gui.addFolder('Volumeteric Light Shader');
-            Object.keys(rays.uniforms).forEach(function(key) {
-                if(key !==  'tDiffuse' && key != 'lightPosition' ){
-                    prop = rays.uniforms[key];
-                    
-                    switch ( key ) {
-                        case 'exposure':
-                            min = 0;
-                            max = 1;
-                            step = 0.01;
-                            break;
-                        case 'decay':
-                            min = 0.8;
-                            max = 1;
-                            step = 0.001;
-                            break;
-                        case 'density':
-                            min = 0;
-                            max = 1;
-                            step = 0.01;
-                            break;
-                        case 'weight':
-                            min = 0;
-                            max = 1;
-                            step = 0.01;
-                            break;
-                        case 'samples':
-                            min = 1;
-                            max = 100;
-                            step = 1.0;
-                            break;
-                    }
-
-                    folder.add(prop, 'value').min(min).max(max).step(step).name(key);
-                }
-            });
-            folder.open();
-
-            folder = gui.addFolder('Blur Shader');
-            folder.add({blur:1}, 'blur')
-                .min(0.0).max(3)
-                .onChange(function(value) {
-                    hblur.uniforms.h.value = value / window.innerWidth;
-                    vblur.uniforms.v.value = value / window.innerHeight;
-                });
-            folder.open();
-
-        }
-
     setupScene();
     setupPostprocessing();
-    addRenderTargetImage();
+    populateGUI();
     onFrame();
 
 }());
